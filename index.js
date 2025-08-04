@@ -1,7 +1,8 @@
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const rowId = url.searchParams.get("id");
+    const rowId = url.searchParams.get("rowId");
+
 
     if (!rowId) {
       return new Response("Missing row ID.", { status: 400 });
