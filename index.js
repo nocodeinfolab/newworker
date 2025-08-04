@@ -1,51 +1,118 @@
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const rowId = url.searchParams.get("rowId");
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request))
+})
 
-
-    if (!rowId) {
-      return new Response("Missing row ID.", { status: 400 });
-    }
-
-    const tableId = '540983'; // replace this
-    const baserowToken = env.BASEROW_TOKEN;
-
-    const rowRes = await fetch(`https://api.baserow.io/api/database/rows/table/${tableId}/${rowId}/?user_field_names=true`, {
-      headers: {
-        Authorization: `Token ${baserowToken}`,
-      },
-    });
-
-    if (!rowRes.ok) {
-      return new Response("Failed to fetch row from Baserow", { status: 500 });
-    }
-
-    const row = await rowRes.json();
-    const files = row["file"]; // replace with your actual field name
-
-    if (!files || files.length === 0) {
-      return new Response("No files available.", { status: 404 });
-    }
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head><title>Downloading Files...</title></head>
-      <body>
-        <h3>Preparing your downloads...</h3>
-        ${files.map((f, i) => `<a id="dl${i}" href="${f.url}" download="${f.name}" style="display:none"></a>`).join('')}
-        <script>
-          window.onload = function() {
-            ${files.map((_, i) => `document.getElementById('dl${i}').click();`).join('\n')}
-          }
-        </script>
-      </body>
-      </html>
-    `;
-
-    return new Response(html, {
-      headers: { "Content-Type": "text/html" },
-    });
+async function handleRequest(request) {
+  // Baserow API configuration
+  const BASEROW_TOKEN = 'kN7gNkHeBtstfqGbCfSmdYjzZmaGK9rS'; // Replace with your Baserow token
+  const TABLE_ID = '540983'; // Your table ID
+  
+  // Parse the URL to get query parameters
+  const url = new URL(request.url)
+  const rowId = url.searchParams.get('row_id')
+  const fileIndex = url.searchParams.get('file_index') || 0 // Default to first file
+  
+  if (!rowId) {
+    return new Response('Please provide a row_id parameter', { status: 400 })
   }
-};
+  
+  try {
+    // Fetch the row data from Baserow
+    const rowUrl = `https://api.baserow.io/api/database/rows/table/${TABLE_ID}/${rowId}/?user_field_names=true`
+    const response = await fetch(rowUrl, {
+      headers: {
+        'Authorization': `Token ${BASEROW_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    if (!response.ok) {
+      return new Response(`Failed to fetch row data: ${response.statusText}`, { status: response.status })
+    }
+    
+    const rowData = await response.json()
+    const files = rowData.File || []
+    
+    if (files.length === 0) {
+      return new Response('No files found in this row', { status: 404 })
+    }
+    
+    // If user requested a specific file index
+    const selectedIndex = parseInt(fileIndex)
+    if (selectedIndex >= 0 && selectedIndex < files.length) {
+      const file = files[selectedIndex]
+      const fileResponse = await fetch(file.url)
+      
+      if (!fileResponse.ok) {
+        return new Response(`Failed to fetch file: ${fileResponse.statusText}`, { status: fileResponse.status })
+      }
+      
+      // Return the requested file
+      const fileData = await fileResponse.arrayBuffer()
+      return new Response(fileData, {
+        headers: {
+          'Content-Type': file.mime_type,
+          'Content-Disposition': `attachment; filename="${file.visible_name}"`
+        }
+      })
+    }
+    
+    // If there's only one file, download it directly
+    if (files.length === 1) {
+      const file = files[0]
+      const fileResponse = await fetch(file.url)
+      
+      if (!fileResponse.ok) {
+        return new Response(`Failed to fetch file: ${fileResponse.statusText}`, { status: fileResponse.status })
+      }
+      
+      const fileData = await fileResponse.arrayBuffer()
+      return new Response(fileData, {
+        headers: {
+          'Content-Type': file.mime_type,
+          'Content-Disposition': `attachment; filename="${file.visible_name}"`
+        }
+      })
+    }
+    
+    // If multiple files, show a selection page
+    const selectionPage = `
+      <html>
+        <head>
+          <title>Multiple Files Available</title>
+          <style>
+            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+            h1 { color: #333; }
+            ul { list-style: none; padding: 0; }
+            li { margin: 10px 0; }
+            a { display: inline-block; padding: 8px 16px; background: #0066ff; color: white; 
+                text-decoration: none; border-radius: 4px; }
+            a:hover { background: #0055dd; }
+          </style>
+        </head>
+        <body>
+          <h1>Multiple Files Available</h1>
+          <p>Please select which file to download:</p>
+          <ul>
+            ${files.map((file, index) => `
+              <li>
+                <a href="?row_id=${rowId}&file_index=${index}">
+                  Download: ${file.visible_name} (${(file.size / 1024).toFixed(1)} KB)
+                </a>
+              </li>
+            `).join('')}
+          </ul>
+        </body>
+      </html>
+    `
+    
+    return new Response(selectionPage, {
+      headers: {
+        'Content-Type': 'text/html'
+      }
+    })
+    
+  } catch (error) {
+    return new Response(`An error occurred: ${error.message}`, { status: 500 })
+  }
+}
