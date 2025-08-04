@@ -4,7 +4,7 @@ addEventListener('fetch', event => {
 
 async function handleRequest(request) {
   // Baserow API configuration
-  const BASEROW_TOKEN = 'your_baserow_token_here';
+  const BASEROW_TOKEN = 'kN7gNkHeBtstfqGbCfSmdYjzZmaGK9rS';
   const TABLE_ID = '540983';
   
   // Parse URL parameters
