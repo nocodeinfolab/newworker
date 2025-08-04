@@ -9,7 +9,6 @@ async function handleRequest(request) {
   
   const url = new URL(request.url);
   const rowId = url.searchParams.get('row_id');
-  const downloadAll = url.searchParams.has('download_all');
   const debug = url.searchParams.has('debug');
 
   // 1. Initial Request Handling
@@ -18,12 +17,11 @@ async function handleRequest(request) {
       <html>
         <body>
           <h1>Missing row_id</h1>
-          <p>Add ?row_id=YOUR_ROW_ID to the URL</p>
-          <p>For all files: ?row_id=YOUR_ROW_ID&download_all</p>
+          <p>Add ?row_id=YOUR_ROW_ID to the URL to view files</p>
+          <p>Example: ${url.origin}/?row_id=1</p>
         </body>
       </html>
     `, {
-      status: 400,
       headers: { 'Content-Type': 'text/html' }
     });
   }
@@ -57,62 +55,49 @@ async function handleRequest(request) {
       return new Response('No files found in this row', { status: 404 });
     }
 
-    // 3. Handle multiple files download
-    if (downloadAll && files.length > 1) {
-      return new Response(`
-        <html>
-          <head>
-            <title>Download All Files</title>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-            <script>
-              async function downloadAll() {
-                const zip = new JSZip();
-                const promises = [];
-                
-                // Add each file to ZIP
-                ${files.map((file, index) => `
-                  promises.push(
-                    fetch('${file.url}')
-                      .then(res => res.blob())
-                      .then(blob => {
-                        zip.file("${file.visible_name}", blob);
-                      })
-                  );
-                `).join('')}
-                
-                // Wait for all files to be added
-                await Promise.all(promises);
-                
-                // Generate and download ZIP
-                const content = await zip.generateAsync({type: 'blob'});
-                const url = URL.createObjectURL(content);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'files_from_row_${rowId}.zip';
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(() => {
-                  document.body.removeChild(a);
-                  window.URL.revokeObjectURL(url);
-                }, 100);
-              }
-              
-              // Start download automatically
-              window.onload = downloadAll;
-            </script>
-          </head>
-          <body>
-            <h1>Preparing download...</h1>
-            <p>If download doesn't start automatically, <a href="#" onclick="downloadAll()">click here</a>.</p>
-          </body>
-        </html>
-      `, {
-        headers: { 'Content-Type': 'text/html' }
-      });
-    }
+    // 3. Display files as clickable links
+    const html = `
+      <html>
+        <head>
+          <title>Files in Row ${rowId}</title>
+          <style>
+            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+            h1 { color: #333; }
+            ul { list-style: none; padding: 0; }
+            li { margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; }
+            a { color: #0066cc; text-decoration: none; font-weight: bold; }
+            a:hover { text-decoration: underline; }
+            .file-icon { margin-right: 8px; }
+            .pdf { color: #e74c3c; }
+            .image { color: #3498db; }
+            .other { color: #9b59b6; }
+          </style>
+        </head>
+        <body>
+          <h1>Files in Row ${rowId}</h1>
+          <ul>
+            ${files.map(file => `
+              <li>
+                <a href="${file.url}" target="_blank">
+                  <span class="file-icon ${
+                    file.is_image ? 'image' : 
+                    file.mime_type === 'application/pdf' ? 'pdf' : 'other'
+                  }">
+                    ${file.is_image ? '🖼️' : 
+                     file.mime_type === 'application/pdf' ? '📄' : '📁'}
+                  </span>
+                  ${file.visible_name} (${(file.size / 1024).toFixed(1)} KB)
+                </a>
+              </li>
+            `).join('')}
+          </ul>
+        </body>
+      </html>
+    `;
 
-    // 4. Default behavior (single file or no download_all flag)
-    return Response.redirect(files[0].url, 302);
+    return new Response(html, {
+      headers: { 'Content-Type': 'text/html' }
+    });
 
   } catch (error) {
     return new Response(`Error: ${error.message}`, { status: 500 });
