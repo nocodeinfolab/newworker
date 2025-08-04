@@ -1,3 +1,5 @@
 name = "new-worker"
 main = "index.js"
 compatibility_date = "2025-07-09"
+[vars]
+BASEROW_TOKEN = "kN7gNkHeBtstfqGbCfSmdYjzZmaGK9rS"
