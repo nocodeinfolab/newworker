@@ -4,78 +4,109 @@ addEventListener('fetch', event => {
 
 async function handleRequest(request) {
   // Baserow API configuration
-  const BASEROW_TOKEN = 'kN7gNkHeBtstfqGbCfSmdYjzZmaGK9rS'; // Replace with your Baserow token
-  const TABLE_ID = '540983'; // Your table ID
+  const BASEROW_TOKEN = 'your_baserow_token_here';
+  const TABLE_ID = '540983';
   
-  // Parse the URL to get query parameters
-  const url = new URL(request.url)
-  const rowId = url.searchParams.get('row_id')
-  const fileIndex = url.searchParams.get('file_index') || 0 // Default to first file
-  
+  // Parse URL parameters
+  const url = new URL(request.url);
+  const rowId = url.searchParams.get('row_id');
+  const fileIndex = url.searchParams.get('file_index') || 0;
+  const debug = url.searchParams.has('debug');
+
   if (!rowId) {
-    return new Response('Please provide a row_id parameter', { status: 400 })
+    return new Response('Please provide a row_id parameter', { status: 400 });
   }
-  
+
   try {
-    // Fetch the row data from Baserow
-    const rowUrl = `https://api.baserow.io/api/database/rows/table/${TABLE_ID}/${rowId}/?user_field_names=true`
+    // Fetch row data from Baserow
+    const rowUrl = `https://api.baserow.io/api/database/rows/table/${TABLE_ID}/${rowId}/?user_field_names=true`;
     const response = await fetch(rowUrl, {
       headers: {
         'Authorization': `Token ${BASEROW_TOKEN}`,
         'Content-Type': 'application/json'
       }
-    })
-    
+    });
+
     if (!response.ok) {
-      return new Response(`Failed to fetch row data: ${response.statusText}`, { status: response.status })
+      return new Response(`Failed to fetch row data: ${response.statusText}`, { 
+        status: response.status 
+      });
     }
+
+    const rowData = await response.json();
     
-    const rowData = await response.json()
-    const files = rowData.File || []
+    // Debug output if requested
+    if (debug) {
+      return new Response(JSON.stringify(rowData, null, 2), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Improved file field access - handles different possible field names
+    let files = [];
     
+    // Try common field names for files
+    if (rowData.File && Array.isArray(rowData.File)) {
+      files = rowData.File;
+    } else if (rowData.file && Array.isArray(rowData.file)) {
+      files = rowData.file;
+    } else if (rowData.files && Array.isArray(rowData.files)) {
+      files = rowData.files;
+    } else {
+      // Check all fields for arrays that look like file objects
+      for (const field in rowData) {
+        if (Array.isArray(rowData[field]) && rowData[field].length > 0 && 
+            typeof rowData[field][0] === 'object' && rowData[field][0].url) {
+          files = rowData[field];
+          break;
+        }
+      }
+    }
+
     if (files.length === 0) {
-      return new Response('No files found in this row', { status: 404 })
+      return new Response(
+        'No files found in this row. Add ?debug=true to see the full response.', 
+        { status: 404 }
+      );
     }
-    
-    // If user requested a specific file index
-    const selectedIndex = parseInt(fileIndex)
+
+    // Handle file index selection
+    const selectedIndex = parseInt(fileIndex);
     if (selectedIndex >= 0 && selectedIndex < files.length) {
-      const file = files[selectedIndex]
-      const fileResponse = await fetch(file.url)
+      const file = files[selectedIndex];
       
-      if (!fileResponse.ok) {
-        return new Response(`Failed to fetch file: ${fileResponse.statusText}`, { status: fileResponse.status })
+      // Verify file object structure
+      if (!file.url || !file.visible_name) {
+        return new Response(
+          'File object missing required properties (url or visible_name)',
+          { status: 500 }
+        );
       }
-      
-      // Return the requested file
-      const fileData = await fileResponse.arrayBuffer()
+
+      const fileResponse = await fetch(file.url, {
+        headers: {
+          'Authorization': `Token ${BASEROW_TOKEN}`
+        }
+      });
+
+      if (!fileResponse.ok) {
+        return new Response(
+          `Failed to fetch file: ${fileResponse.statusText}`, 
+          { status: fileResponse.status }
+        );
+      }
+
+      // Return the file with proper headers
+      const fileData = await fileResponse.arrayBuffer();
       return new Response(fileData, {
         headers: {
-          'Content-Type': file.mime_type,
+          'Content-Type': file.mime_type || 'application/octet-stream',
           'Content-Disposition': `attachment; filename="${file.visible_name}"`
         }
-      })
+      });
     }
-    
-    // If there's only one file, download it directly
-    if (files.length === 1) {
-      const file = files[0]
-      const fileResponse = await fetch(file.url)
-      
-      if (!fileResponse.ok) {
-        return new Response(`Failed to fetch file: ${fileResponse.statusText}`, { status: fileResponse.status })
-      }
-      
-      const fileData = await fileResponse.arrayBuffer()
-      return new Response(fileData, {
-        headers: {
-          'Content-Type': file.mime_type,
-          'Content-Disposition': `attachment; filename="${file.visible_name}"`
-        }
-      })
-    }
-    
-    // If multiple files, show a selection page
+
+    // Multiple files - show selection page
     const selectionPage = `
       <html>
         <head>
@@ -88,6 +119,7 @@ async function handleRequest(request) {
             a { display: inline-block; padding: 8px 16px; background: #0066ff; color: white; 
                 text-decoration: none; border-radius: 4px; }
             a:hover { background: #0055dd; }
+            .debug { margin-top: 30px; padding: 15px; background: #f5f5f5; }
           </style>
         </head>
         <body>
@@ -102,17 +134,21 @@ async function handleRequest(request) {
               </li>
             `).join('')}
           </ul>
+          <div class="debug">
+            <p><a href="?row_id=${rowId}&debug=true">View raw API response</a></p>
+          </div>
         </body>
       </html>
-    `
-    
+    `;
+
     return new Response(selectionPage, {
-      headers: {
-        'Content-Type': 'text/html'
-      }
-    })
-    
+      headers: { 'Content-Type': 'text/html' }
+    });
+
   } catch (error) {
-    return new Response(`An error occurred: ${error.message}`, { status: 500 })
+    return new Response(
+      `An error occurred: ${error.message}\n\nStack: ${error.stack}`,
+      { status: 500 }
+    );
   }
 }
